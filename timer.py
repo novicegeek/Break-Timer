@@ -1,167 +1,275 @@
-import tkinter as tk
+"""Break Timer — Modern break reminder with web-based UI."""
+import json
+import os
+import struct
+import sys
+import threading
+import time
 
-class HybridTimer:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Break Timer")
-        self.root.geometry("350x480")
-        self.root.resizable(False, False)
-        
-        # State variables
-        self.is_work_phase = True
-        self.running = False
-        self.current_seconds = 0 
-        self.target_seconds = 0
-        self.timer_id = None
+try:
+    import webview
+except ImportError:
+    print("Break Timer requires pywebview. Install it with: pip install pywebview")
+    print("(Windows 11 already includes the WebView2 runtime.)")
+    input("\nPress Enter to exit...")
+    sys.exit(1)
 
-        self.create_widgets()
-        self.reset_timer()
 
-    def create_widgets(self):
-        input_frame = tk.Frame(self.root)
-        input_frame.pack(pady=10)
+def _app_dir():
+    """Directory for user data (settings.json lives alongside the executable)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
-        # Work Inputs (Count-Up Target)
-        tk.Label(input_frame, text="Work Duration:", font=("Arial", 10, "bold")).grid(row=0, column=0, columnspan=4)
-        self.work_min = tk.Entry(input_frame, width=5, justify='center')
-        self.work_min.insert(0, "45")
-        self.work_min.grid(row=1, column=0, padx=2)
-        tk.Label(input_frame, text="m").grid(row=1, column=1, sticky="w")
-        self.work_sec = tk.Entry(input_frame, width=5, justify='center')
-        self.work_sec.insert(0, "00")
-        self.work_sec.grid(row=1, column=2, padx=2)
-        tk.Label(input_frame, text="s").grid(row=1, column=3, sticky="w")
 
-        # Break Inputs (Count-Down Start)
-        tk.Label(input_frame, text="Break Duration:", font=("Arial", 10, "bold")).grid(row=2, column=0, columnspan=4, pady=(10,0))
-        self.break_min = tk.Entry(input_frame, width=5, justify='center')
-        self.break_min.insert(0, "10")
-        self.break_min.grid(row=3, column=0, padx=2)
-        tk.Label(input_frame, text="m").grid(row=3, column=1, sticky="w")
-        self.break_sec = tk.Entry(input_frame, width=5, justify='center')
-        self.break_sec.insert(0, "00")
-        self.break_sec.grid(row=3, column=2, padx=2)
-        tk.Label(input_frame, text="s").grid(row=3, column=3, sticky="w")
+def _res(rel):
+    """Path to a resource bundled by PyInstaller (index.html, timer.png)."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, rel)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), rel)
 
-        # Status & Timer Display
-        self.status_label = tk.Label(self.root, text="Ready", font=("Arial", 14, "bold"))
-        self.status_label.pack(pady=10)
 
-        self.timer_label = tk.Label(self.root, text="00:00", font=("Courier", 45, "bold"))
-        self.timer_label.pack()
+_DEFAULTS = {"work_m": 45, "work_s": 0, "break_m": 10, "break_s": 0}
 
-        # Control Buttons
-        self.btn_start_pause = tk.Button(self.root, text="Start", width=15, height=2, command=self.toggle_timer, bg="#2ecc71", fg="white", font=("Arial", 10, "bold"))
-        self.btn_start_pause.pack(pady=5)
 
-        self.btn_reset = tk.Button(self.root, text="Reset", width=15, command=self.reset_timer)
-        self.btn_reset.pack(pady=5)
+def _load_settings():
+    p = os.path.join(_app_dir(), "settings.json")
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return dict(_DEFAULTS)
 
-        self.btn_switch = tk.Button(self.root, text="Switch to Break", width=20, command=self.manual_switch, bg="#ecf0f1")
-        self.btn_switch.pack(pady=20)
 
-    def update_display(self):
-        mins, secs = divmod(max(0, self.current_seconds), 60)
-        self.timer_label.config(text=f"{mins:02d}:{secs:02d}")
+def _save_settings(work_m, work_s, break_m, break_s):
+    p = os.path.join(_app_dir(), "settings.json")
+    try:
+        with open(p, "w") as f:
+            json.dump({"work_m": work_m, "work_s": work_s,
+                       "break_m": break_m, "break_s": break_s}, f)
+    except OSError:
+        pass
 
-    def toggle_timer(self):
-        if not self.running:
-            self.running = True
-            self.btn_start_pause.config(text="Pause", bg="#f1c40f", fg="black")
-            self.run_timer()
-        else:
-            self.stop_timer_logic()
 
-    def stop_timer_logic(self):
-        self.running = False
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
-        self.btn_start_pause.config(text="Start", bg="#2ecc71", fg="white")
+def _set_window_icon_async(title):
+    """Daemon thread: wrap timer.png as ICO and set it as the window icon."""
+    png_path = _res("timer.png")
+    ico_dir = _app_dir()
+    ico_path = os.path.join(ico_dir, "timer.ico")
 
-    def run_timer(self):
-        if not self.running:
-            return
-        
-        self.update_display()
+    if not os.path.exists(png_path):
+        return
 
-        if self.is_work_phase:
-            # COUNT-UP LOGIC
-            if self.current_seconds < self.target_seconds:
-                self.current_seconds += 1
-                self.timer_id = self.root.after(1000, self.run_timer)
-            else:
-                self.finish_phase()
-        else:
-            # COUNT-DOWN LOGIC
-            if self.current_seconds > 0:
-                self.current_seconds -= 1
-                self.timer_id = self.root.after(1000, self.run_timer)
-            else:
-                self.finish_phase()
-
-    def finish_phase(self):
-        self.stop_timer_logic()
-        self.show_completion_popup()
-
-    def show_completion_popup(self):
-        # Play the system default notification sound
-        self.root.bell()
-        popup = tk.Toplevel(self.root)
-        popup.title("Time's Up!")
-        popup.geometry("250x150")
-        popup.attributes("-topmost", True)
-        
-        if self.is_work_phase:
-            tk.Label(popup, text="Work period over! \nTime to have a break", font=("Arial", 12)).pack(pady=10)
-
-            tk.Button(popup, text="Start a break", width=15, 
-                    command=lambda: [popup.destroy(), self.manual_switch()]).pack(pady=2)
-        else:
-            tk.Label(popup, text="Break period over! \nTime to work", font=("Arial", 12)).pack(pady=10)
-
-            tk.Button(popup, text="Start working", width=15, 
-                    command=lambda: [popup.destroy(), self.manual_switch()]).pack(pady=2)
-
-        tk.Button(popup, text="Extend +5 Mins", width=15, 
-                  command=lambda: [popup.destroy(), self.extend_phase(5)]).pack(pady=2)
-
-    def extend_phase(self, minutes):
-        added_secs = minutes * 60
-        if self.is_work_phase:
-            # For count-up, extension means increasing the target
-            self.target_seconds += added_secs
-        else:
-            # For count-down, extension means adding time to current
-            self.current_seconds += added_secs
-        self.update_display()
-        self.toggle_timer()
-
-    def reset_timer(self):
-        self.stop_timer_logic()
+    # Build ICO from PNG — ICO is just a header + raw PNG data
+    if not os.path.exists(ico_path):
         try:
-            w_m, w_s = int(self.work_min.get() or 0), int(self.work_sec.get() or 0)
-            b_m, b_s = int(self.break_min.get() or 0), int(self.break_sec.get() or 0)
-            
-            if self.is_work_phase:
-                self.current_seconds = 0  # Start at zero for count-up
-                self.target_seconds = (w_m * 60) + w_s
-                self.status_label.config(text="WORKING", fg="#e74c3c")
-                self.btn_switch.config(text="Switch to Break")
-            else:
-                self.current_seconds = (b_m * 60) + b_s # Start at max for count-down
-                self.status_label.config(text="BREAK TIME", fg="#27ae60")
-                self.btn_switch.config(text="Switch to Work")
-            
-            self.update_display()
-        except ValueError:
+            with open(png_path, "rb") as f:
+                png_data = f.read()
+            buf = struct.pack("<HHH", 0, 1, 1)
+            buf += struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, len(png_data), 22)
+            buf += png_data
+            with open(ico_path, "wb") as f:
+                f.write(buf)
+        except OSError:
+            ico_path = png_path  # fall back to PNG
+
+    def _apply():
+        time.sleep(0.3)
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.FindWindowW(None, title)
+            if not hwnd:
+                return
+            hicon = ctypes.windll.user32.LoadImageW(
+                None, ico_path, 1, 0, 0, 0x00000010
+            )
+            if hicon:
+                ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 1, hicon)
+                ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 0, hicon)
+        except Exception:
             pass
 
-    def manual_switch(self):
-        self.is_work_phase = not self.is_work_phase
-        self.reset_timer()
-        self.toggle_timer()
+    threading.Thread(target=_apply, daemon=True).start()
+
+
+class TimerAPI:
+    """Bridge between the HTML/JS UI and Python timer logic."""
+
+    def __init__(self):
+        self._window = None
+        self._lock = threading.Lock()
+
+        self._running = False
+        self._is_work = True
+        self._current_sec = 0
+        self._target_sec = 0
+
+        self._thread = None
+        self._stop_ev = threading.Event()
+
+    def set_window(self, window):
+        self._window = window
+
+    # ── Called from JS ────────────────────────────────────────
+
+    def get_state(self):
+        return {
+            "current_sec": self._current_sec,
+            "target_sec": self._target_sec,
+            "is_work": int(self._is_work),
+            "running": int(self._running),
+        }
+
+    def get_settings(self):
+        return _load_settings()
+
+    def close_window(self):
+        if self._window:
+            self._window.destroy()
+
+    def start_work(self, work_m, work_s, break_m, break_s):
+        _save_settings(work_m, work_s, break_m, break_s)
+        with self._lock:
+            self._teardown_thread()
+            self._is_work = True
+            self._current_sec = 0
+            self._target_sec = work_m * 60 + work_s
+            self._running = True
+            self._spawn()
+            self._push_state()
+
+    def start_break(self, work_m, work_s, break_m, break_s):
+        _save_settings(work_m, work_s, break_m, break_s)
+        with self._lock:
+            self._teardown_thread()
+            self._is_work = False
+            target = break_m * 60 + break_s
+            self._target_sec = target
+            self._current_sec = target
+            self._running = True
+            self._spawn()
+            self._push_state()
+
+    def toggle(self, work_m=0, work_s=0, break_m=0, break_s=0):
+        if work_m or work_s or break_m or break_s:
+            _save_settings(work_m, work_s, break_m, break_s)
+        with self._lock:
+            if self._running:
+                self._running = False
+            else:
+                if self._target_sec == 0:
+                    if self._is_work:
+                        self._target_sec = work_m * 60 + work_s
+                    else:
+                        self._target_sec = break_m * 60 + break_s
+                    self._current_sec = (
+                        0 if self._is_work else self._target_sec
+                    )
+                self._running = True
+                self._stop_ev.clear()
+                self._spawn()
+            self._push_state()
+
+    def reset(self, work_m, work_s, break_m, break_s):
+        _save_settings(work_m, work_s, break_m, break_s)
+        with self._lock:
+            self._running = False
+            if self._is_work:
+                self._current_sec = 0
+                self._target_sec = work_m * 60 + work_s
+            else:
+                self._target_sec = break_m * 60 + break_s
+                self._current_sec = self._target_sec
+            self._push_state()
+
+    def switch_mode(self, work_m, work_s, break_m, break_s):
+        _save_settings(work_m, work_s, break_m, break_s)
+        with self._lock:
+            self._teardown_thread()
+            self._is_work = not self._is_work
+            if self._is_work:
+                self._current_sec = 0
+                self._target_sec = work_m * 60 + work_s
+            else:
+                self._target_sec = break_m * 60 + break_s
+                self._current_sec = self._target_sec
+            self._running = True
+            self._spawn()
+            self._push_state()
+
+    def extend(self, minutes):
+        with self._lock:
+            added = minutes * 60
+            if self._is_work:
+                self._target_sec += added
+            else:
+                self._current_sec += added
+            if not self._running:
+                self._running = True
+                self._stop_ev.clear()
+                self._spawn()
+            self._push_state()
+
+    # ── Internal ──────────────────────────────────────────────
+
+    def _teardown_thread(self):
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._stop_ev.set()
+            self._thread.join(timeout=2)
+            self._stop_ev.clear()
+
+    def _spawn(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        finished = False
+        while self._running:
+            if self._stop_ev.wait(1):
+                break
+            with self._lock:
+                if not self._running:
+                    break
+                if self._is_work:
+                    self._current_sec += 1
+                else:
+                    self._current_sec -= 1
+
+                done = (
+                    self._is_work and self._current_sec >= self._target_sec
+                ) or (
+                    not self._is_work and self._current_sec <= 0
+                )
+                if done:
+                    self._running = False
+                    finished = True
+
+            self._push_state()
+            if finished:
+                self._push_finished()
+                break
+
+    def _push_state(self):
+        if self._window:
+            self._window.evaluate_js(
+                f"window.__update({self._current_sec},{self._target_sec},"
+                f"{int(self._is_work)},{int(self._running)})"
+            )
+
+    def _push_finished(self):
+        if self._window:
+            self._window.evaluate_js(f"window.__done({int(self._is_work)})")
+
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = HybridTimer(root)
-    root.mainloop()
+    api = TimerAPI()
+    window = webview.create_window(
+        "Break Timer",
+        url=_res("index.html"), js_api=api,
+        width=400, height=620, resizable=False,
+    )
+    api.set_window(window)
+
+    _set_window_icon_async("Break Timer")
+    webview.start()
