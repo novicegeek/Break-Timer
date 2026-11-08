@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Break Timer</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #F1F4F9;
+    --card: #FFFFFF;
+    --primary: #6366F1;
+    --primary-hover: #4F46E5;
+    --primary-light: #EEF2FF;
+    --work: #EF4444;
+    --work-bg: #FEF2F2;
+    --break: #22C55E;
+    --break-bg: #F0FDF4;
+    --text: #0F172A;
+    --text-sec: #64748B;
+    --text-ter: #94A3B8;
+    --border: #E2E8F0;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --shadow-md: 0 4px 16px rgba(0,0,0,.07);
+    --radius: 14px;
+    --radius-sm: 10px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .app {
+    width: 100%; max-width: 400px; padding: 20px 20px 16px;
+    display: flex; flex-direction: column;
+  }
+
+  h1 {
+    font-size: 14px; font-weight: 600; color: var(--text-sec);
+    text-align: center; letter-spacing: .3px;
+    margin-bottom: 16px;
+  }
+
+  /* ── Timer Card ── */
+  .timer-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 22px 20px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* SVG Ring */
+  .ring-wrap { position: relative; width: 170px; height: 170px; }
+  .ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring-bg { fill: none; stroke: var(--border); stroke-width: 6; }
+  .ring-fg {
+    fill: none; stroke: var(--primary);
+    stroke-width: 6; stroke-linecap: round;
+    stroke-dasharray: 596.9;
+    stroke-dashoffset: 596.9;
+    transition: stroke-dashoffset .4s ease, stroke .4s ease;
+  }
+  .ring-fg.work-color { stroke: var(--primary); }
+  .ring-fg.break-color { stroke: var(--break); }
+
+  .ring-label {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    transform: rotate(0deg);
+    pointer-events: none;
+  }
+  .ring-label .time {
+    font-size: 42px; font-weight: 700; font-variant-numeric: tabular-nums;
+    letter-spacing: .5px; line-height: 1; color: var(--text);
+  }
+  .ring-label .total {
+    font-size: 14px; font-weight: 500; color: var(--text-ter);
+    margin-top: 4px;
+  }
+
+  /* Status badge */
+  .status {
+    display: inline-flex; align-items: center; gap: 7px;
+    margin-top: 12px; padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 13px; font-weight: 600;
+    background: var(--primary-light); color: var(--primary);
+    transition: background .3s, color .3s;
+  }
+  .status .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+    transition: transform .3s;
+  }
+  .status.running .dot { animation: pulse 1.6s ease-in-out infinite; }
+  .status.work { background: var(--work-bg); color: var(--work); }
+  .status.break { background: var(--break-bg); color: var(--break); }
+  .status.idle { background: #F1F5F9; color: var(--text-sec); }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: .7; }
+    50% { transform: scale(1.35); opacity: 1; }
+  }
+
+  /* ── Buttons ── */
+  .controls { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+  .btn {
+    width: 100%; padding: 9px 0; border: none; border-radius: var(--radius-sm);
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: background .2s, transform .12s, box-shadow .2s;
+  }
+  .btn:active { transform: scale(.97); }
+
+  .btn-primary  { background: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(99,102,241,.3); }
+  .btn-primary:hover { background: var(--primary-hover); box-shadow: 0 4px 14px rgba(99,102,241,.35); }
+
+  .btn-ghost {
+    background: transparent; color: var(--text-sec);
+    border: 1.5px solid var(--border);
+  }
+  .btn-ghost:hover { background: #F8FAFC; color: var(--text); border-color: #CBD5E1; }
+
+  /* ── Settings ── */
+  .settings {
+    margin-top: 10px;
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 12px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  .setting-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .setting-row .label {
+    width: 44px; font-size: 13px; font-weight: 600;
+  }
+  .setting-row .label.work  { color: var(--primary); }
+  .setting-row .label.break { color: var(--break); }
+
+  .setting-row input {
+    width: 48px; padding: 6px 4px;
+    border: 1.5px solid var(--border); border-radius: 8px;
+    font-size: 14px; font-weight: 500; text-align: center;
+    outline: none; transition: border-color .2s;
+    background: var(--card); color: var(--text);
+    -moz-appearance: textfield;
+  }
+  .setting-row input::-webkit-outer-spin-button,
+  .setting-row input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .setting-row input:focus { border-color: var(--primary); }
+  .setting-row .unit { font-size: 12px; color: var(--text-ter); }
+  .setting-row .unit:last-of-type { margin-right: 0; }
+
+  /* ── Overlay Popup ── */
+  .overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(15,23,42,.45);
+    backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s;
+  }
+  .overlay.open { opacity: 1; pointer-events: auto; }
+
+  .popup {
+    background: var(--card); border-radius: var(--radius);
+    box-shadow: 0 20px 60px rgba(0,0,0,.15);
+    padding: 32px 28px 24px; width: 290px;
+    text-align: center;
+  }
+  .popup h2 { font-size: 20px; margin-bottom: 4px; }
+  .popup h2.work-title { color: var(--primary); }
+  .popup h2.break-title { color: var(--break); }
+  .popup p { font-size: 14px; color: var(--text-sec); margin-bottom: 20px; }
+  .popup .btn + .btn { margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Break Timer</h1>
+
+  <!-- Timer Card -->
+  <div class="timer-card">
+    <div class="ring-wrap">
+      <svg viewBox="0 0 220 220">
+        <circle class="ring-bg" cx="110" cy="110" r="95"/>
+        <circle id="ring" class="ring-fg" cx="110" cy="110" r="95"/>
+      </svg>
+      <div class="ring-label">
+        <span class="time" id="timer-display">00:00</span>
+        <span class="total" id="total-display">&nbsp;/ 00:00</span>
+      </div>
+    </div>
+    <div class="status idle" id="status-badge">
+      <span class="dot"></span>
+      <span id="status-text">Ready</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn btn-primary" id="btn-primary" onclick="toggleTimer()">Start</button>
+    <button class="btn btn-ghost" onclick="resetTimer()">Reset</button>
+    <button class="btn btn-ghost" id="btn-switch" onclick="switchMode()">Switch to Break</button>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings">
+    <div class="setting-row">
+      <span class="label work">Work</span>
+      <input type="number" id="work-min" value="45" min="0" max="999">
+      <span class="unit">min</span>
+      <input type="number" id="work-sec" value="0" min="0" max="59">
+      <span class="unit">sec</span>
+    </div>
+    <div class="setting-row">
+      <span class="label break">Break</span>
+      <input type="number" id="break-min" value="10" min="0" max="999">
+      <span class="unit">min</span>
+      <input type="number" id="break-sec" value="0" min="0" max="59">
+      <span class="unit">sec</span>
+    </div>
+  </div>
+</div>
+
+<!-- Completion Overlay -->
+<div class="overlay" id="overlay">
+  <div class="popup">
+    <h2 id="popup-title" class="work-title">Work Complete!</h2>
+    <p id="popup-msg">Time for a break</p>
+    <button class="btn btn-primary" id="popup-btn" onclick="popupAction()">Start Break</button>
+    <button class="btn btn-ghost" onclick="extendFive()">+5 Minutes</button>
+    <button class="btn btn-ghost" onclick="closePopup()" style="margin-top:4px">Dismiss</button>
+  </div>
+</div>
+
+<script>
+// ── API Helpers ──────────────────────────────────────────────
+
+function api(method, ...args) {
+  if (window.pywebview && window.pywebview.api)
+    return window.pywebview.api[method](...args);
+  console.log("pywebview API:", method, args);
+}
+
+function val(id) { return parseInt(document.getElementById(id).value) || 0; }
+function vals()  { return [val("work-min"), val("work-sec"), val("break-min"), val("break-sec")]; }
+
+// ── State ────────────────────────────────────────────────────
+
+const C = 596.9; // 2 * π * 95
+let isWork = true, running = false;
+
+// ── Called by Python via evaluate_js ─────────────────────────
+
+window.__update = function(currentSec, targetSec, isWork_, running_) {
+  isWork = !!isWork_;
+  running = !!running_;
+
+  // Timer text
+  const cm = String(Math.floor(currentSec / 60)).padStart(2, "0");
+  const cs = String(currentSec % 60).padStart(2, "0");
+  document.getElementById("timer-display").textContent = cm + ":" + cs;
+
+  // Total text
+  const tm = String(Math.floor(targetSec / 60)).padStart(2, "0");
+  const ts = String(targetSec % 60).padStart(2, "0");
+  document.getElementById("total-display").textContent = "/ " + tm + ":" + ts;
+
+  // Progress ring
+  const pct = targetSec > 0
+    ? (isWork ? currentSec / targetSec : (targetSec - currentSec) / targetSec)
+    : 0;
+  const ring = document.getElementById("ring");
+  ring.style.strokeDashoffset = String(C * (1 - Math.min(1, pct)));
+  ring.classList.toggle("work-color", isWork);
+  ring.classList.toggle("break-color", !isWork);
+
+  // Status badge
+  const badge = document.getElementById("status-badge");
+  badge.classList.remove("idle", "work", "break", "running");
+  if (running) badge.classList.add(isWork ? "work" : "break", "running");
+  else         badge.classList.add(isWork ? "work" : "break");
+  document.getElementById("status-text").textContent =
+    !running && currentSec === 0 ? "Ready" : isWork ? "Working" : "Break";
+
+  // Primary button
+  const btn = document.getElementById("btn-primary");
+  btn.textContent = running ? "Pause" : "Start";
+
+  // Switch button
+  document.getElementById("btn-switch").textContent =
+    isWork ? "Switch to Break" : "Switch to Work";
+};
+
+window.__done = function(isWork_) {
+  isWork = !!isWork_;
+  const overlay = document.getElementById("overlay");
+  const title = document.getElementById("popup-title");
+  const msg   = document.getElementById("popup-msg");
+  const act   = document.getElementById("popup-btn");
+
+  if (isWork) {
+    title.textContent = "Work Complete!";
+    title.className = "work-title";
+    msg.textContent  = "Time for a break \u{1f4a4}";
+    act.textContent  = "Start Break";
+  } else {
+    title.textContent = "Break Over!";
+    title.className = "break-title";
+    msg.textContent  = "Time to focus \u{1f4aa}";
+    act.textContent  = "Start Working";
+  }
+  overlay.classList.add("open");
+  beep();
+};
+
+// ── Beep (Web Audio) ─────────────────────────────────────────
+
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 800;
+    osc.type = "sine";
+    gain.gain.setValueAtTime(.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .6);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + .6);
+  } catch (_) {}
+}
+
+// ── User Actions ─────────────────────────────────────────────
+
+function toggleTimer() {
+  api("toggle", ...vals());
+}
+
+function resetTimer() {
+  api("reset", ...vals());
+}
+
+function switchMode() {
+  api("switch_mode", ...vals());
+}
+
+function popupAction() {
+  document.getElementById("overlay").classList.remove("open");
+  if (isWork) api("start_break", ...vals());
+  else        api("start_work",  ...vals());
+}
+
+function extendFive() {
+  document.getElementById("overlay").classList.remove("open");
+  api("extend", 5);
+}
+
+function closePopup() {
+  document.getElementById("overlay").classList.remove("open");
+}
+
+
+// ── Init ─────────────────────────────────────────────────────
+
+window.addEventListener("pywebviewready", async () => {
+  const [s, cfg] = await Promise.all([api("get_state"), api("get_settings")]);
+  if (cfg) {
+    document.getElementById("work-min").value = cfg.work_m;
+    document.getElementById("work-sec").value = cfg.work_s;
+    document.getElementById("break-min").value = cfg.break_m;
+    document.getElementById("break-sec").value = cfg.break_s;
+  }
+  if (s) window.__update(s.current_sec, s.target_sec, s.is_work, s.running);
+});
+</script>
+</body>
+</html>
