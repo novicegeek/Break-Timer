@@ -1,5 +1,6 @@
 """Break Timer — Modern break reminder with web-based UI."""
 import ctypes
+import ctypes.wintypes
 import json
 import os
 import struct
@@ -126,6 +127,61 @@ _ALERT_TEXT = {
             "heading": "Break Over!", "msg": "Time to focus",
             "primary": "Start Working", "ghost": "+5 Minutes", "emoji": "💪"},
 }
+
+
+class _WINDOWPLACEMENT(ctypes.Structure):
+    _fields_ = [("length", ctypes.wintypes.UINT),
+                ("flags", ctypes.wintypes.UINT),
+                ("showCmd", ctypes.wintypes.UINT),
+                ("ptMinPosition", ctypes.wintypes.POINT),
+                ("ptMaxPosition", ctypes.wintypes.POINT),
+                ("rcNormalPosition", ctypes.wintypes.RECT)]
+
+
+def _alert_position():
+    """Where to place the alert: next to the timer window, but always on-screen.
+
+    A minimized window reports coordinates around -32000, so for it the
+    position the window restores to is used instead. Returns logical pixels,
+    as pywebview's create_window expects."""
+    try:
+        u = ctypes.windll.user32
+        work = ctypes.wintypes.RECT()
+        if not u.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0):
+            return None, None  # SPI_GETWORKAREA
+
+        hwnd = u.FindWindowW(None, "Break Timer")
+        src = None
+        if hwnd:
+            src = ctypes.wintypes.RECT()
+            if u.IsIconic(hwnd):
+                wp = _WINDOWPLACEMENT()
+                wp.length = ctypes.sizeof(_WINDOWPLACEMENT)
+                if u.GetWindowPlacement(hwnd, ctypes.byref(wp)):
+                    src = wp.rcNormalPosition
+                else:
+                    src = None
+            else:
+                u.GetWindowRect(hwnd, ctypes.byref(src))
+
+        # Ignore anything outside the visible desktop
+        if src is not None and (
+                src.left < work.left - 200 or src.top < work.top - 200
+                or src.left > work.right or src.top > work.bottom):
+            src = None
+
+        left = src.left + 20 if src is not None else work.left + 24
+        top = src.top + 20 if src is not None else work.top + 24
+
+        # Never let the alert hang over an edge of the work area
+        left = min(max(left, work.left), max(work.left, work.right - _POPUP_W - 24))
+        top = min(max(top, work.top), max(work.top, work.bottom - _POPUP_H - 24))
+
+        scale = (u.GetDpiForWindow(hwnd) / 96.0) if hwnd else 1.0
+        scale = scale or 1.0
+        return int(left / scale), int(top / scale)
+    except Exception:
+        return None, None
 
 
 def _raise_window(title):
@@ -369,12 +425,9 @@ class TimerAPI:
         except OSError:
             html = None
 
-        # Appear where the timer window is, so it is always on-screen
-        x = y = None
-        try:
-            x, y = self._window.x + 16, self._window.y + 16
-        except Exception:
-            pass
+        # Appear next to the timer window, falling back to the screen corner
+        # when that window is minimized (its coordinates are off-screen then).
+        x, y = _alert_position()
 
         common = dict(
             js_api=self, width=_POPUP_W, height=_POPUP_H,
