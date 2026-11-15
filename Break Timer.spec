@@ -27,6 +27,7 @@ a = Analysis(
         "webview",
         "bottle",
         "proxy_tools",
+        "winsound",
     ],
     hookspath=[],
     hooksconfig={},

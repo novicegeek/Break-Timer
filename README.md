@@ -17,7 +17,9 @@ while the timer itself is plain Python.
 - `+5 Minutes` shortcut to extend the current stage from the alert
 - Settings (work and break durations) are saved to `settings.json` and restored
   on the next launch
-- Optional audible cue (Web Audio beep) together with the alert
+- Audible cue when the alert opens — a single soft 800 Hz "ding", generated at
+  runtime and played natively so it works even though the alert page itself
+  has had no user interaction
 - Ships as a single `.exe` that runs by double-clicking — no Python required
 
 ## Requirements

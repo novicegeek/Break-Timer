@@ -184,6 +184,69 @@ def _alert_position():
         return None, None
 
 
+_alert_wav = None
+
+
+def _alert_wav_data():
+    """Build the alert tone as WAV bytes: a single 800 Hz sine with a smooth
+    exponential decay — the same "ding" as the original in-page beep."""
+    global _alert_wav
+    if _alert_wav is not None:
+        return _alert_wav
+
+    import io
+    import math
+    import struct
+    import wave
+
+    rate = 44100
+    freq = 800.0
+    dur = 0.6
+    # 0.25 -> ~0.001 over the note, matching the old Web Audio envelope
+    decay = math.log(0.25 / 0.001) / dur
+
+    pcm = bytearray()
+    for i in range(int(rate * dur)):
+        t = i / rate
+        env = 0.25 * math.exp(-decay * t)
+        value = int(max(-1.0, min(1.0, env * math.sin(2 * math.pi * freq * t))) * 32767)
+        pcm += struct.pack("<h", value)
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(pcm))
+    _alert_wav = buf.getvalue()
+    return _alert_wav
+
+
+def _beep():
+    """Play the alert chime.
+
+    Played natively: the alert is a separate page with no user interaction, so
+    the browser keeps Web Audio muted there. A generated WAV played through
+    winsound keeps the soft sine timbre of the original in-page beep, unlike
+    the harsh square-wave tone of the BIOS beep."""
+    def _run():
+        try:
+            import winsound
+            # Memory playback cannot be asynchronous, so it blocks this
+            # worker thread for the length of the chime (~0.6 s).
+            winsound.PlaySound(
+                _alert_wav_data(),
+                winsound.SND_MEMORY | winsound.SND_NODEFAULT,
+            )
+        except Exception:
+            try:
+                ctypes.windll.kernel32.Beep(1046, 180)
+            except Exception:
+                pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _raise_window(title):
     """Show the alert on top of the other windows, once, without keeping it
     pinned above everything afterwards."""
@@ -398,6 +461,7 @@ class TimerAPI:
     def _push_finished(self):
         # Pop up a separate alert window so the reminder is visible even when
         # the timer window is behind other windows or minimized.
+        _beep()
         self._open_popup(self._is_work)
 
     # ── Alert pop-up ──────────────────────────────────────────
